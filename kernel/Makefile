@@ -22,6 +22,10 @@ CFLAGS_REMOVE_cgroup-debug.o = -pg
 CFLAGS_REMOVE_irq_work.o = -pg
 endif
 
+ifdef CONFIG_ARM_AUTO_HOTPLUG
+  obj-$(CONFIG_ARM_AUTO_HOTPLUG)	+= auto_hotplug.o
+endif
+
 obj-y += sched/
 obj-y += power/
 
