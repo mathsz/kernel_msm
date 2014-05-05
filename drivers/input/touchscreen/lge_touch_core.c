@@ -36,28 +36,11 @@
 
 #include <linux/input/lge_touch_core.h>
 
-#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
-#ifdef CONFIG_TOUCHSCREEN_SWEEP2WAKE
-#include <linux/input/sweep2wake.h>
-#endif
-#ifdef CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE
-#include <linux/input/doubletap2wake.h>
-#endif
-#endif
-
 #ifdef CUST_G_TOUCH
 #include "./DS4/RefCode.h"
 #include "./DS4/RefCode_PDTScan.h"
 struct i2c_client *ds4_i2c_client;
 static int f54_fullrawcap_mode = 0;
-
-#if defined(CONFIG_MACH_APQ8064_GK_KR) || defined(CONFIG_MACH_APQ8064_GKATT) || defined(CONFIG_MACH_APQ8064_GVDCM) || defined(CONFIG_MACH_APQ8064_J1D) || defined(CONFIG_MACH_APQ8064_J1KD)
-// do nothing
-#else
-#define G_ONLY
-#endif
-
-
 #endif
 
 struct lge_touch_data
@@ -157,13 +140,6 @@ static void release_all_ts_event(struct lge_touch_data *ts);
 
 int trigger_baseline = 0;
 int ts_charger_plug = 0;
-int ts_charger_type = 0;
-#ifdef G_ONLY
-static void safety_reset(struct lge_touch_data *ts);
-static int touch_ic_init(struct lge_touch_data *ts);
-int cur_hopping_idx = 3;
-extern int cns_en;
-#endif
 static struct hrtimer hr_touch_trigger_timer;
 #define MS_TO_NS(x)	(x * 1E6L)
 
@@ -180,13 +156,9 @@ static enum hrtimer_restart touch_trigger_timer_handler(struct hrtimer *timer)
 	return HRTIMER_NORESTART;
 }
 
-void trigger_baseline_state_machine(int plug_in, int type)
+void trigger_baseline_state_machine(int plug_in)
 {
-	u8 buf=0;
-#ifdef G_ONLY
-	extern u8 hopping;
-#endif
-
+	u8 buf;
 
 	if (touch_test_dev && touch_test_dev->pdata->role->ghost_detection_enable) {
 
@@ -197,53 +169,16 @@ void trigger_baseline_state_machine(int plug_in, int type)
 					touch_i2c_read(touch_test_dev->client, 0x50, 1, &buf);
 					buf = buf & 0xDF;
 					touch_i2c_write_byte(touch_test_dev->client, 0x50, buf);
-#ifdef G_ONLY
-					cns_en = 0;
-					if(cur_hopping_idx != 3) cur_hopping_idx = 3;
-					safety_reset(touch_test_dev);
-					queue_delayed_work(touch_wq, &touch_test_dev->work_init,
-								msecs_to_jiffies(touch_test_dev->pdata->role->booting_delay));
-					TOUCH_INFO_MSG("cur_hopping_idx [ %s ] = %x\n", __func__, cur_hopping_idx);
-#endif
 				} else if(plug_in ==1){
 					touch_i2c_read(touch_test_dev->client, 0x50, 1, &buf);
 					buf = buf | 0x20;
 					touch_i2c_write_byte(touch_test_dev->client, 0x50, buf);
-#ifdef G_ONLY
-					touch_i2c_write_byte(touch_test_dev->client, 0xFF, 0x01);
-					touch_i2c_read(touch_test_dev->client, 0x0D, 1, &buf);
-
-					if( buf >= 1 ) {
-						switch(type) {
-							case 0:
-							case 1:
-								if( cur_hopping_idx != 4 ) {
-									//touch_i2c_write_byte(touch_test_dev->client, 0x04, 0x84);
-									cur_hopping_idx = 4;
-									hopping = 1;
-									TOUCH_INFO_MSG("cur_hopping_idx [ %s ] = %x\n", __func__, cur_hopping_idx);
-								} else {
-									hopping = 0;
-								}
-								break;
-							default:
-								break;
-						}
-					}
-					touch_i2c_write_byte(touch_test_dev->client, 0xFF, 0x00);
-#endif
 				}
 			}
-
-			ts_charger_type = type;
-			TOUCH_INFO_MSG(" trigger_baseline_state_machine = %d type = %d \n", plug_in, type);
+			TOUCH_INFO_MSG(" trigger_baseline_state_machine = %d \n", plug_in);
 			ts_charger_plug = plug_in;
 
-#ifdef G_ONLY
-			if( trigger_baseline==0 && plug_in ==1){
-#else
 			if( trigger_baseline==0 ){
-#endif
 				trigger_baseline = 1;
 
 				hrtimer_start(&hr_touch_trigger_timer, ktime_set(0, MS_TO_NS(1000)), HRTIMER_MODE_REL);
@@ -255,9 +190,6 @@ void trigger_baseline_state_machine(int plug_in, int type)
 int ghost_detect_solution(struct lge_touch_data *ts)
 {
 	extern u8 pressure_zero;
-#ifdef G_ONLY
-	extern u8 hopping;
-#endif
 	int first_int_detection = 0;
 	int cnt = 0, id =0;
 
@@ -297,12 +229,7 @@ int ghost_detect_solution(struct lge_touch_data *ts)
 		TOUCH_INFO_MSG("pressure\n");
 		ghost_detection = true;
 	}
-#ifdef G_ONLY
-	/*if(hopping == 1) {
-		TOUCH_INFO_MSG("hopping\n");
-		ghost_detection = true;
-	}*/
-#endif
+
 	if (ts_charger_plug) {
 		if( (ts->pdata->role->ta_debouncing_finger_num  <= ts->ts_data.total_num) && ( ta_debouncing_count < ts->pdata->role->ta_debouncing_count)) {
 			ta_debouncing_count ++;
@@ -3588,9 +3515,9 @@ static int touch_probe(struct i2c_client *client, const struct i2c_device_id *id
 		ts->accuracy_filter.ignore_pressure_gap = 5;
 		ts->accuracy_filter.delta_max = 30;
 		ts->accuracy_filter.max_pressure = 255;
-		ts->accuracy_filter.time_to_max_pressure = one_sec / 25;
-		ts->accuracy_filter.direction_count = one_sec / 8;
-		ts->accuracy_filter.touch_max_count = one_sec / 3;
+		ts->accuracy_filter.time_to_max_pressure = one_sec / 20;
+		ts->accuracy_filter.direction_count = one_sec / 6;
+		ts->accuracy_filter.touch_max_count = one_sec / 2;
 	}
 
 #if defined(CONFIG_HAS_EARLYSUSPEND)
@@ -3701,20 +3628,6 @@ static void touch_early_suspend(struct early_suspend *h)
 {
 	struct lge_touch_data *ts =
 			container_of(h, struct lge_touch_data, early_suspend);
-#endif
-#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
- #if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE) || defined(CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE)
- 	bool prevent_sleep = false;
-#endif
-#if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE)
- 	prevent_sleep = (s2w_switch > 0) && (s2w_s2sonly == 0);
-#endif
-#if defined(CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE)
-	prevent_sleep = prevent_sleep || (dt2w_switch > 0);
-#endif
-#endif
-
-
 
 	if (unlikely(touch_debug_mask & DEBUG_TRACE))
 		TOUCH_DEBUG_MSG("\n");
@@ -3724,52 +3637,36 @@ static void touch_early_suspend(struct early_suspend *h)
 		return;
 	}
 
+#ifdef CUST_G_TOUCH
+	if (ts->pdata->role->ghost_detection_enable) {
+		resume_flag = 0;
+	}
+#endif
 
-	
-
+	if (ts->pdata->role->operation_mode)
+		disable_irq(ts->client->irq);
+	else
+		hrtimer_cancel(&ts->timer);
 #ifdef CUST_G_TOUCH
 	if (ts->pdata->role->ghost_detection_enable) {
 		hrtimer_cancel(&hr_touch_trigger_timer);
 	}
-
-#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
-
-	if (prevent_sleep) {
-		enable_irq_wake(ts->client->irq);
-		release_all_ts_event(ts);
-	} else
-
 #endif
 
-	#endif
- 	{
- 		if (ts->pdata->role->operation_mode == INTERRUPT_MODE)
- 			disable_irq(ts->client->irq);
- 		else
-			hrtimer_cancel(&ts->timer);
+	cancel_work_sync(&ts->work);
+	cancel_delayed_work_sync(&ts->work_init);
+	if (ts->pdata->role->key_type == TOUCH_HARD_KEY)
+		cancel_delayed_work_sync(&ts->work_touch_lock);
 
 	release_all_ts_event(ts);
 
 	touch_power_cntl(ts, ts->pdata->role->suspend_pwr);
-    }
 }
 
 static void touch_late_resume(struct early_suspend *h)
 {
 	struct lge_touch_data *ts =
 			container_of(h, struct lge_touch_data, early_suspend);
-
-#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
-#if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE) || defined(CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE)
- 	bool prevent_sleep = false;
-#endif
-#if defined(CONFIG_TOUCHSCREEN_SWEEP2WAKE)
- 	prevent_sleep = (s2w_switch > 0) && (s2w_s2sonly == 0);
-#endif
-#if defined(CONFIG_TOUCHSCREEN_DOUBLETAP2WAKE)
- 	prevent_sleep = prevent_sleep || (dt2w_switch > 0);
-#endif
-#endif
 
 	if (unlikely(touch_debug_mask & DEBUG_TRACE))
 		TOUCH_DEBUG_MSG("\n");
@@ -3779,6 +3676,7 @@ static void touch_late_resume(struct early_suspend *h)
 		return;
 	}
 
+	touch_power_cntl(ts, ts->pdata->role->resume_pwr);
 #ifdef CUST_G_TOUCH
 	if (ts->pdata->role->ghost_detection_enable) {
 		resume_flag = 1;
@@ -3786,29 +3684,18 @@ static void touch_late_resume(struct early_suspend *h)
 	}
 #endif
 
-	#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
- 	if (prevent_sleep)
- 		disable_irq_wake(ts->client->irq);
+	if (ts->pdata->role->operation_mode)
+		enable_irq(ts->client->irq);
 	else
-		#endif
-	{
-		touch_power_cntl(ts, ts->pdata->role->resume_pwr);
+		hrtimer_start(&ts->timer, ktime_set(0, ts->pdata->role->report_period), HRTIMER_MODE_REL);
 
-	if (ts->pdata->role->operation_mode == INTERRUPT_MODE)
- 			enable_irq(ts->client->irq);
- 		else
- 			hrtimer_start(&ts->timer,
- 				ktime_set(0, ts->pdata->role->report_period),
- 						HRTIMER_MODE_REL);
- 
- 		if (ts->pdata->role->resume_pwr == POWER_ON)
- 			queue_delayed_work(touch_wq, &ts->work_init,
- 				msecs_to_jiffies(ts->pdata->role->booting_delay));
- 		else
- 			queue_delayed_work(touch_wq, &ts->work_init, 0);
- 	}
+	if (ts->pdata->role->resume_pwr == POWER_ON)
+		queue_delayed_work(touch_wq, &ts->work_init,
+				msecs_to_jiffies(ts->pdata->role->booting_delay));
+	else
+		queue_delayed_work(touch_wq, &ts->work_init, 0);
 }
-
+#endif
 
 #if defined(CONFIG_PM)
 static int touch_suspend(struct device *device)
